@@ -1,25 +1,25 @@
 import Fastify from 'fastify';
 
-const server = Fastify({
+import { analysisController } from '@app/container';
+import { analysisRoutes } from '@presentation/http/routes/analysis-routes';
+
+const app = Fastify({
   logger: true
 });
 
-server.get('/health', async () => {
+app.get('/health', async () => {
   return {
     status: 'ok'
   };
 });
 
 const start = async () => {
-  try {
-    await server.listen({
-      port: Number(process.env.PORT) || 3000,
-      host: '0.0.0.0'
-    });
-  } catch (error) {
-    server.log.error(error);
-    process.exit(1);
-  }
+  await analysisRoutes(app, analysisController);
+
+  await app.listen({
+    port: 3000,
+    host: '0.0.0.0'
+  });
 };
 
 start();

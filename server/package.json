@@ -1,7 +1,6 @@
 {
   "name": "server",
   "private": true,
-  "type": "module",
   "scripts": {
     "dev": "tsx watch src/app/server.ts",
     "build": "tsc",
