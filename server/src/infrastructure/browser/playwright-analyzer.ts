@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 
-import type { IAnalysis, IResource } from '@domain/analysis/analysis';
+import type { IAnalysis, IResource } from '@shared/contracts/analysis';
 import { getResourceType } from '@domain/analysis/get-resource-type';
 
 export class PlaywrightAnalyzer {
@@ -10,8 +10,97 @@ export class PlaywrightAnalyzer {
     });
 
     const page = await browser.newPage();
-
     const startedAt = Date.now();
+
+    await page.addInitScript(() => {
+      const vitals = {
+        lcp: null as {
+          value: number;
+          element: string | null;
+          resourceUrl: string | null;
+        } | null,
+
+        cls: 0,
+
+        inp: null as number | null
+      };
+
+      let clsValue = 0;
+      let inpValue = 0;
+
+      const lcpObserver = new PerformanceObserver((list) => {
+        const entries = list.getEntries();
+
+        const lastEntry = entries[entries.length - 1] as PerformanceEntry | undefined;
+
+        if (!lastEntry) {
+          return;
+        }
+
+        const lcpEntry = lastEntry as PerformanceEntry & {
+          startTime: number;
+          element?: Element;
+          url?: string;
+        };
+
+        vitals.lcp = {
+          value: lcpEntry.startTime,
+          element: lcpEntry.element?.tagName.toLowerCase() ?? null,
+          resourceUrl: lcpEntry.url ?? null
+        };
+      });
+
+      lcpObserver.observe({
+        type: 'largest-contentful-paint',
+        buffered: true
+      });
+
+      const clsObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const layoutShift = entry as PerformanceEntry & {
+            value?: number;
+            hadRecentInput?: boolean;
+          };
+
+          if (!layoutShift.hadRecentInput) {
+            clsValue += layoutShift.value ?? 0;
+          }
+        }
+
+        vitals.cls = clsValue;
+      });
+
+      clsObserver.observe({
+        type: 'layout-shift',
+        buffered: true
+      });
+
+      const inpObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const eventEntry = entry as PerformanceEntry & {
+            interactionId?: number;
+          };
+
+          if (eventEntry.interactionId) {
+            inpValue = Math.max(inpValue, eventEntry.duration);
+            vitals.inp = inpValue;
+          }
+        }
+      });
+
+      try {
+        inpObserver.observe({
+          type: 'event',
+          buffered: true
+        });
+      } catch {
+        // INP is not supported in this browser context.
+      }
+
+      Object.assign(window, {
+        __perfLensVitals: vitals
+      });
+    });
 
     try {
       await page.goto(url, {
@@ -19,46 +108,78 @@ export class PlaywrightAnalyzer {
         timeout: 30_000
       });
 
-      const duration = Date.now() - startedAt;
+      await page.waitForTimeout(1000);
 
-      const resources = await page.evaluate(() => {
-        const resourceEntries = performance.getEntriesByType('resource').map((entry) => {
-          const resource = entry as PerformanceResourceTiming;
+      const analysisDuration = Date.now() - startedAt;
 
-          return {
-            url: resource.name,
-            initiatorType: resource.initiatorType,
-            size: resource.encodedBodySize,
-            duration: resource.duration,
-            startTime: resource.startTime,
-            responseEnd: resource.responseEnd,
-            transferSize: resource.transferSize
-          };
-        });
+      const result = await page.evaluate(() => {
+        const navigationEntry = performance.getEntriesByType('navigation')[0] as
+          PerformanceNavigationTiming | undefined;
 
-        const navigationEntry = performance.getEntriesByType('navigation')[0];
+        const paintEntries = performance.getEntriesByType('paint');
 
-        if (!navigationEntry) {
-          return resourceEntries;
-        }
+        const fcpEntry = paintEntries.find((entry) => entry.name === 'first-contentful-paint');
 
-        const navigation = navigationEntry as PerformanceNavigationTiming;
+        const vitals = (
+          window as Window & {
+            __perfLensVitals?: {
+              lcp: {
+                value: number;
+                element: string | null;
+                resourceUrl: string | null;
+              } | null;
 
-        return [
-          {
-            url: navigation.name,
-            initiatorType: 'document',
-            size: navigation.encodedBodySize,
-            duration: navigation.duration,
-            startTime: navigation.startTime,
-            responseEnd: navigation.responseEnd,
-            transferSize: navigation.transferSize
+              cls: number;
+
+              inp: number | null;
+            };
+          }
+        ).__perfLensVitals;
+
+        return {
+          webVitals: {
+            lcp: vitals?.lcp ?? null,
+            inp: vitals?.inp ?? null,
+            cls: vitals?.cls ?? 0,
+            fcp: fcpEntry?.startTime ?? null,
+            ttfb: navigationEntry
+              ? navigationEntry.responseStart - navigationEntry.requestStart
+              : null
           },
-          ...resourceEntries
-        ];
+
+          resources: performance.getEntriesByType('resource').map((entry) => {
+            const resource = entry as PerformanceResourceTiming;
+
+            return {
+              url: resource.name,
+              initiatorType: resource.initiatorType,
+              size: resource.encodedBodySize,
+              duration: resource.duration,
+              startTime: resource.startTime,
+              responseEnd: resource.responseEnd,
+              transferSize: resource.transferSize
+            };
+          }),
+
+          navigation: navigationEntry
+            ? {
+                url: navigationEntry.name,
+                initiatorType: 'document',
+                size: navigationEntry.encodedBodySize,
+                duration: navigationEntry.duration,
+                startTime: navigationEntry.startTime,
+                responseEnd: navigationEntry.responseEnd,
+                transferSize: navigationEntry.transferSize
+              }
+            : null
+        };
       });
 
-      const normalizedResources: IResource[] = resources.flatMap((resource) => {
+      const rawResources = result.navigation
+        ? [result.navigation, ...result.resources]
+        : result.resources;
+
+      const normalizedResources: IResource[] = rawResources.flatMap((resource) => {
         const type = getResourceType(resource.url, resource.initiatorType);
 
         if (!type) {
@@ -80,9 +201,9 @@ export class PlaywrightAnalyzer {
 
       return {
         url,
-        duration,
+        analysisDuration,
         resources: normalizedResources,
-        webVitals: {}
+        webVitals: result.webVitals
       };
     } finally {
       await browser.close();

@@ -1,7 +1,22 @@
 import react from '@vitejs/plugin-react';
+
 import { defineConfig } from 'vite';
 
-// https://vite.dev/config/
+import path from 'node:path';
+
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 export default defineConfig({
-  plugins: [react()]
+  envDir: path.resolve(__dirname, '..'),
+
+  plugins: [react()],
+
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      '@shared': fileURLToPath(new URL('../shared/src', import.meta.url))
+    }
+  }
 });

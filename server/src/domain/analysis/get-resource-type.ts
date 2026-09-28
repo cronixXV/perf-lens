@@ -1,4 +1,4 @@
-import { TResourceType } from './analysis';
+import { TResourceType } from '@shared/contracts/analysis';
 
 export const getResourceType = (url: string, initiatorType: string): TResourceType | undefined => {
   if (initiatorType === 'document') {
