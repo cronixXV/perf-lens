@@ -11,6 +11,21 @@ export interface IResource {
   transferSize: number;
 }
 
+export interface IRawLongTask {
+  startTime: number;
+  duration: number;
+  scriptUrl: string | null;
+}
+
+export interface ILongTask extends IRawLongTask {
+  blockingTime: number;
+}
+
+export interface ILongTaskSummary {
+  count: number;
+  totalBlockingTime: number;
+  tasks: ILongTask[];
+}
 export interface ILcpDetails {
   value: number;
   element: string | null;
@@ -25,9 +40,38 @@ export interface IWebVitals {
   ttfb: number | null;
 }
 
+export interface IJavaScriptSummary {
+  totalSize: number;
+  count: number;
+  largestScripts: IResource[];
+}
+
+export type TDependencyNodeType = 'document' | 'script' | 'stylesheet' | 'image' | 'font' | 'other';
+
+export interface IDependencyNode {
+  id: string;
+  label: string;
+  url: string;
+  type: TDependencyNodeType;
+  size: number;
+}
+
+export interface IDependencyEdge {
+  source: string;
+  target: string;
+}
+
+export interface IDependencyGraph {
+  nodes: IDependencyNode[];
+  edges: IDependencyEdge[];
+}
+
 export interface IAnalysis {
   url: string;
   analysisDuration: number;
   resources: IResource[];
   webVitals: IWebVitals;
+  longTasks: ILongTaskSummary;
+  javascript: IJavaScriptSummary;
+  dependencyGraph: IDependencyGraph;
 }

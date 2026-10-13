@@ -2,6 +2,9 @@ import { chromium } from 'playwright';
 
 import type { IAnalysis, IResource } from '@shared/contracts/analysis';
 import { getResourceType } from '@domain/analysis/get-resource-type';
+import { calculateLongTasks } from '@domain/analysis/calculate-long-tasks';
+import { analyzeJavaScript } from '@domain/analysis/analyze-javascript';
+import { buildDependencyGraph } from '@domain/analysis/build-dependency-graph';
 
 export class PlaywrightAnalyzer {
   async analyze(url: string): Promise<IAnalysis> {
@@ -10,6 +13,28 @@ export class PlaywrightAnalyzer {
     });
 
     const page = await browser.newPage();
+    const cdpSession = await page.context().newCDPSession(page);
+
+    await cdpSession.send('Network.enable');
+
+    const dependencies: {
+      sourceUrl: string;
+      targetUrl: string;
+    }[] = [];
+
+    cdpSession.on('Network.requestWillBeSent', (event) => {
+      const stackFrames = event.initiator.stack?.callFrames ?? [];
+
+      const sourceUrl = stackFrames.find((frame) => frame.url)?.url ?? event.initiator.url;
+
+      if (sourceUrl && sourceUrl !== event.request.url) {
+        dependencies.push({
+          sourceUrl,
+          targetUrl: event.request.url
+        });
+      }
+    });
+
     const startedAt = Date.now();
 
     await page.addInitScript(() => {
@@ -27,6 +52,12 @@ export class PlaywrightAnalyzer {
 
       let clsValue = 0;
       let inpValue = 0;
+
+      const longTasks: {
+        startTime: number;
+        duration: number;
+        scriptUrl: string | null;
+      }[] = [];
 
       const lcpObserver = new PerformanceObserver((list) => {
         const entries = list.getEntries();
@@ -88,6 +119,31 @@ export class PlaywrightAnalyzer {
         }
       });
 
+      const longTaskObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const longTaskEntry = entry as PerformanceEntry & {
+            startTime: number;
+            duration: number;
+            attribution?: Array<{
+              name?: string;
+            }>;
+          };
+
+          const attribution = longTaskEntry.attribution?.[0];
+
+          longTasks.push({
+            startTime: longTaskEntry.startTime,
+            duration: longTaskEntry.duration,
+            scriptUrl: attribution?.name ?? null
+          });
+        }
+      });
+
+      longTaskObserver.observe({
+        type: 'longtask',
+        buffered: true
+      });
+
       try {
         inpObserver.observe({
           type: 'event',
@@ -98,7 +154,8 @@ export class PlaywrightAnalyzer {
       }
 
       Object.assign(window, {
-        __perfLensVitals: vitals
+        __perfLensVitals: vitals,
+        __perfLensLongTasks: longTasks
       });
     });
 
@@ -136,6 +193,17 @@ export class PlaywrightAnalyzer {
           }
         ).__perfLensVitals;
 
+        const longTasks =
+          (
+            window as Window & {
+              __perfLensLongTasks?: {
+                startTime: number;
+                duration: number;
+                scriptUrl: string | null;
+              }[];
+            }
+          ).__perfLensLongTasks ?? [];
+
         return {
           webVitals: {
             lcp: vitals?.lcp ?? null,
@@ -171,7 +239,9 @@ export class PlaywrightAnalyzer {
                 responseEnd: navigationEntry.responseEnd,
                 transferSize: navigationEntry.transferSize
               }
-            : null
+            : null,
+
+          longTasks
         };
       });
 
@@ -199,13 +269,21 @@ export class PlaywrightAnalyzer {
         ];
       });
 
+      const javascript = analyzeJavaScript(normalizedResources);
+      const longTasks = calculateLongTasks(result.longTasks);
+      const dependencyGraph = buildDependencyGraph(normalizedResources, dependencies);
+
       return {
         url,
         analysisDuration,
         resources: normalizedResources,
-        webVitals: result.webVitals
+        webVitals: result.webVitals,
+        longTasks,
+        javascript,
+        dependencyGraph
       };
     } finally {
+      await cdpSession.detach();
       await browser.close();
     }
   }
