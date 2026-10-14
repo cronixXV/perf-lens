@@ -205,7 +205,8 @@ export const DependencyGraph = ({ graph }: IDependencyGraphProps) => {
                   const isRelated = relatedIds.has(node.id);
                   const color = NODE_COLORS[node.type];
                   const labelOnLeft = node.x > WIDTH / 2;
-                  const labelX = labelOnLeft ? -17 : 17;
+                  const labelOffset = isSelected ? 32 : 24;
+                  const labelX = labelOnLeft ? -labelOffset : labelOffset;
 
                   return (
                     <g
