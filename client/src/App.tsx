@@ -16,7 +16,7 @@ const App = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    createAnalysis('https://chatgpt.com/')
+    createAnalysis('https://example.com/')
       .then(setAnalysis)
       .catch(() => {
         setError('Failed to analyze website');

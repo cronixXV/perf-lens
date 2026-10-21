@@ -1,3 +1,5 @@
+import type { IPerformanceIssue } from './performance-issue';
+
 export type TResourceType =
   'document' | 'script' | 'stylesheet' | 'image' | 'font' | 'fetch' | 'xhr';
 
@@ -74,4 +76,7 @@ export interface IAnalysis {
   longTasks: ILongTaskSummary;
   javascript: IJavaScriptSummary;
   dependencyGraph: IDependencyGraph;
+  issues: IPerformanceIssue[];
 }
+
+export type TAnalysisInput = Omit<IAnalysis, 'issues'>;

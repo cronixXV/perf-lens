@@ -5,6 +5,7 @@ import { getResourceType } from '@domain/analysis/get-resource-type';
 import { calculateLongTasks } from '@domain/analysis/calculate-long-tasks';
 import { analyzeJavaScript } from '@domain/analysis/analyze-javascript';
 import { buildDependencyGraph } from '@domain/analysis/build-dependency-graph';
+import { analyzePerformanceIssues } from '@domain/analysis/analyze-performance-issues';
 
 export class PlaywrightAnalyzer {
   async analyze(url: string): Promise<IAnalysis> {
@@ -16,6 +17,16 @@ export class PlaywrightAnalyzer {
     const cdpSession = await page.context().newCDPSession(page);
 
     await cdpSession.send('Network.enable');
+
+    const renderBlockingStyles = new Set<string>();
+
+    cdpSession.on('Network.requestWillBeSent', (event) => {
+      const behavior = event.renderBlockingBehavior?.toLowerCase();
+
+      if (event.type === 'Stylesheet' && behavior === 'blocking') {
+        renderBlockingStyles.add(event.request.url);
+      }
+    });
 
     const dependencies: {
       sourceUrl: string;
@@ -273,7 +284,7 @@ export class PlaywrightAnalyzer {
       const longTasks = calculateLongTasks(result.longTasks);
       const dependencyGraph = buildDependencyGraph(normalizedResources, dependencies);
 
-      return {
+      const baseAnalysis = {
         url,
         analysisDuration,
         resources: normalizedResources,
@@ -281,6 +292,13 @@ export class PlaywrightAnalyzer {
         longTasks,
         javascript,
         dependencyGraph
+      };
+
+      const issues = analyzePerformanceIssues(baseAnalysis, renderBlockingStyles);
+
+      return {
+        ...baseAnalysis,
+        issues
       };
     } finally {
       await cdpSession.detach();
