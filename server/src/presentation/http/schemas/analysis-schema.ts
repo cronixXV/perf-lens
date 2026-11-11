@@ -11,3 +11,17 @@ export const createAnalysisSchema = {
     }
   }
 } as const;
+
+export const getAnalysisByIdSchema = {
+  params: {
+    type: 'object',
+    required: ['id'],
+    additionalProperties: false,
+    properties: {
+      id: {
+        type: 'string',
+        format: 'uuid'
+      }
+    }
+  }
+} as const;

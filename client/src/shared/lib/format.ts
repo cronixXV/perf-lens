@@ -19,3 +19,11 @@ export const formatBytes = (bytes: number): string => {
 
   return `${(bytes / 1024 ** 2).toFixed(2)} MB`;
 };
+
+const dateTimeFormatter = new Intl.DateTimeFormat('en-US', {
+  dateStyle: 'medium',
+  timeStyle: 'short'
+});
+
+export const formatDateTime = (value: string | number | Date) =>
+  dateTimeFormatter.format(new Date(value));

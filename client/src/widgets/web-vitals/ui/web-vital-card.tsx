@@ -1,10 +1,12 @@
 import { Badge, Card, Heading, Stack, Text } from '@chakra-ui/react';
 
-import type { TVitalMetric, TVitalStatus } from '../model/types/web-vitals.type';
-import { getVitalLabel } from '../lib/get-vital-label';
-import { getVitalStatusLabel } from '../lib/get-vital-status-label';
-import { formatVitalValue } from '../lib/format-vital-value';
-import { getStatusColorPalette } from '../lib/get-status-color-palette';
+import {
+  METRIC_CONFIG,
+  VITAL_STATUS_CONFIG,
+  formatVitalValue,
+  type TVitalMetric,
+  type TVitalStatus
+} from '@/entities/performance-metric';
 
 interface IWebVitalCardProps {
   metric: TVitalMetric;
@@ -13,15 +15,17 @@ interface IWebVitalCardProps {
 }
 
 export const WebVitalCard = ({ metric, value, status }: IWebVitalCardProps) => {
+  const { label, color } = VITAL_STATUS_CONFIG[status];
+
   return (
     <Card.Root variant="outline" bg="surface.bg" borderColor="border" borderRadius="xl">
       <Card.Body>
         <Stack gap={4}>
           <Stack direction="row" align="center" justify="space-between">
-            <Heading size="sm">{getVitalLabel(metric)}</Heading>
+            <Heading size="sm">{METRIC_CONFIG[metric].label}</Heading>
 
-            <Badge colorPalette={getStatusColorPalette(status)} variant="subtle">
-              {getVitalStatusLabel(status)}
+            <Badge colorPalette={color} variant="subtle">
+              {label}
             </Badge>
           </Stack>
 

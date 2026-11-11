@@ -1,19 +1,9 @@
-import type { IAnalysis } from '@shared/contracts/analysis';
+import type { ISavedAnalysis } from '@shared/contracts/saved-analysis';
 
-const API_URL = import.meta.env.VITE_API_URL;
+import { apiClient } from './client';
 
-export const createAnalysis = async (url: string): Promise<IAnalysis> => {
-  const response = await fetch(`${API_URL}/analyses`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ url })
-  });
+export const createAnalysis = async (url: string): Promise<ISavedAnalysis> => {
+  const { data } = await apiClient.post<ISavedAnalysis>('/analyses', { url }, { timeout: 120_000 });
 
-  if (!response.ok) {
-    throw new Error('Failed to analyze website');
-  }
-
-  return response.json();
+  return data;
 };
