@@ -66,7 +66,10 @@ export const isPublicIpAddress = (address: string): boolean => {
 };
 
 const isLocalHostname = (hostname: string): boolean => {
-  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const normalized = hostname
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '')
+    .toLowerCase();
 
   return normalized === 'localhost' || normalized.endsWith('.localhost');
 };
