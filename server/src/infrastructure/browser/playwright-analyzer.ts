@@ -1,11 +1,14 @@
 import { chromium } from 'playwright';
-import type { Browser, CDPSession } from 'playwright';
+import type { Browser, BrowserContext, CDPSession } from 'playwright';
 
 import type { IAnalysis, IResource } from '@shared/contracts/analysis';
 
 import { classifyPlaywrightError, TPlaywrightErrorStage } from './classify-playwright-error';
 import { detectCloudflareBlock } from './detect-cloudflare-block';
 
+import { browserIsolation } from '@infrastructure/config/browser-isolation';
+import { analysisLimits } from '@infrastructure/config/analysis-limits';
+import { assertSafeHttpUrl } from '@infrastructure/security/ssrf-protection';
 import { getResourceType } from '@domain/analysis/get-resource-type';
 import { calculateLongTasks } from '@domain/analysis/calculate-long-tasks';
 import { analyzeJavaScript } from '@domain/analysis/analyze-javascript';
@@ -16,19 +19,133 @@ import { AnalysisError } from '@domain/analysis/errors/analysis-error';
 export class PlaywrightAnalyzer {
   async analyze(url: string): Promise<IAnalysis> {
     let browser: Browser | null = null;
+    let browserContext: BrowserContext | null = null;
     let cdpSession: CDPSession | null = null;
     let stage: TPlaywrightErrorStage = 'launch';
+    let ssrfBlock: AnalysisError | null = null;
+    let resourceLimitError: AnalysisError | null = null;
 
     try {
       browser = await chromium.launch({
-        headless: true
+        headless: true,
+        chromiumSandbox: browserIsolation.chromiumSandbox,
+        args: [
+          '--disable-background-networking',
+          '--disable-component-update',
+          '--disable-default-apps',
+          '--disable-extensions',
+          '--disable-sync'
+        ]
       });
 
-      const page = await browser.newPage();
+      stage = 'navigation';
 
-      cdpSession = await page.context().newCDPSession(page);
+      browserContext = await browser.newContext({
+        acceptDownloads: false,
+        ignoreHTTPSErrors: false,
+        permissions: [],
+        serviceWorkers: 'block',
+        viewport: {
+          width: 1440,
+          height: 900
+        }
+      });
+
+      const page = await browserContext.newPage();
+
+      page.on('popup', (popup) => {
+        void popup.close().catch(() => undefined);
+      });
+
+      page.on('dialog', (dialog) => {
+        void dialog.dismiss().catch(() => undefined);
+      });
+
+      const exceedResourceLimit = (message: string) => {
+        resourceLimitError ??= new AnalysisError({
+          code: 'RESOURCE_LIMIT_EXCEEDED',
+          message,
+          retryable: false
+        });
+      };
+
+      await assertSafeHttpUrl(url);
+
+      await browserContext.route('**/*', async (route) => {
+        try {
+          if (resourceLimitError) {
+            await route.abort('blockedbyclient').catch(() => undefined);
+            return;
+          }
+
+          let redirectCount = 0;
+          let redirectSource = route.request().redirectedFrom();
+
+          while (redirectSource) {
+            redirectCount += 1;
+            redirectSource = redirectSource.redirectedFrom();
+          }
+
+          if (redirectCount > analysisLimits.maxRedirects) {
+            exceedResourceLimit(
+              `Website exceeded the redirect limit of ${analysisLimits.maxRedirects}`
+            );
+            await route.abort('blockedbyclient').catch(() => undefined);
+            return;
+          }
+
+          await assertSafeHttpUrl(route.request().url());
+          await route.continue();
+        } catch (error) {
+          if (error instanceof AnalysisError) {
+            ssrfBlock ??= error;
+            await route.abort('blockedbyclient').catch(() => undefined);
+            return;
+          }
+
+          // Do not let the browser navigate to a host whose DNS result could
+          // not be checked. The navigation will be reported as a normal error.
+          await route.abort('blockedbyclient').catch(() => undefined);
+        }
+      });
+
+      cdpSession = await browserContext.newCDPSession(page);
 
       await cdpSession.send('Network.enable');
+
+      let transferredBytes = 0;
+      let declaredResponseBytes = 0;
+
+      cdpSession.on('Network.responseReceived', (event) => {
+        const contentLength = Object.entries(event.response.headers).find(
+          ([header]) => header.toLowerCase() === 'content-length'
+        )?.[1];
+        const bytes = Number(contentLength);
+
+        if (!Number.isSafeInteger(bytes) || bytes < 0) {
+          return;
+        }
+
+        declaredResponseBytes += bytes;
+
+        if (declaredResponseBytes > analysisLimits.maxPageSizeBytes) {
+          exceedResourceLimit(
+            `Website exceeded the page-size limit of ${analysisLimits.maxPageSizeBytes} bytes`
+          );
+          void page.close().catch(() => undefined);
+        }
+      });
+
+      cdpSession.on('Network.loadingFinished', (event) => {
+        transferredBytes += event.encodedDataLength;
+
+        if (transferredBytes > analysisLimits.maxPageSizeBytes) {
+          exceedResourceLimit(
+            `Website exceeded the page-size limit of ${analysisLimits.maxPageSizeBytes} bytes`
+          );
+          void page.close().catch(() => undefined);
+        }
+      });
 
       const renderBlockingStyles = new Set<string>();
 
@@ -59,6 +176,20 @@ export class PlaywrightAnalyzer {
       });
 
       const startedAt = Date.now();
+
+      const getRemainingAnalysisTime = () => {
+        const remaining = analysisLimits.maxAnalysisDurationMs - (Date.now() - startedAt);
+
+        if (remaining <= 0) {
+          throw new AnalysisError({
+            code: 'TIMEOUT',
+            message: 'Website analysis timed out',
+            retryable: true
+          });
+        }
+
+        return remaining;
+      };
 
       await page.addInitScript(() => {
         const vitals = {
@@ -181,14 +312,16 @@ export class PlaywrightAnalyzer {
         });
       });
 
-      stage = 'navigation';
-
       await page.goto(url, {
         waitUntil: 'load',
-        timeout: 30_000
+        timeout: getRemainingAnalysisTime()
       });
 
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(Math.min(1000, getRemainingAnalysisTime()));
+
+      if (resourceLimitError) {
+        throw resourceLimitError;
+      }
 
       const isCloudflareBlocked = await detectCloudflareBlock(page);
 
@@ -202,7 +335,7 @@ export class PlaywrightAnalyzer {
 
       stage = 'analysis';
 
-      const analysisDuration = Date.now() - startedAt;
+      page.setDefaultTimeout(getRemainingAnalysisTime());
 
       const result = await page.evaluate(() => {
         const navigationEntry = performance.getEntriesByType('navigation')[0] as
@@ -277,6 +410,20 @@ export class PlaywrightAnalyzer {
         };
       });
 
+      if (resourceLimitError) {
+        throw resourceLimitError;
+      }
+
+      const analysisDuration = Date.now() - startedAt;
+
+      if (analysisDuration > analysisLimits.maxAnalysisDurationMs) {
+        throw new AnalysisError({
+          code: 'TIMEOUT',
+          message: 'Website analysis timed out',
+          retryable: true
+        });
+      }
+
       const rawResources = result.navigation
         ? [result.navigation, ...result.resources]
         : result.resources;
@@ -326,10 +473,22 @@ export class PlaywrightAnalyzer {
         throw error;
       }
 
+      if (ssrfBlock) {
+        throw ssrfBlock;
+      }
+
+      if (resourceLimitError) {
+        throw resourceLimitError;
+      }
+
       throw classifyPlaywrightError(error, stage);
     } finally {
       if (cdpSession) {
         await cdpSession.detach().catch(() => undefined);
+      }
+
+      if (browserContext) {
+        await browserContext.close().catch(() => undefined);
       }
 
       if (browser) {

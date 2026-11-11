@@ -11,7 +11,18 @@ const app = Fastify({
   logger: true
 });
 
+const isRequestValidationError = (error: unknown): error is { validation: unknown } =>
+  typeof error === 'object' && error !== null && 'validation' in error;
+
 app.setErrorHandler((error, request, reply) => {
+  if (isRequestValidationError(error) && error.validation) {
+    return reply.code(400).send({
+      code: 'INVALID_URL',
+      message: 'Enter a valid HTTP or HTTPS website URL',
+      retryable: false
+    });
+  }
+
   if (error instanceof AnalysisError) {
     request.log.warn(
       {

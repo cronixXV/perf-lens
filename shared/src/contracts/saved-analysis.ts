@@ -1,4 +1,4 @@
-import { IAnalysis } from './analysis';
+import type { IAnalysis } from './analysis';
 
 export interface ISavedAnalysis {
   id: string;

@@ -53,7 +53,7 @@ apiClient.interceptors.response.use(
 
     if (!error.response) {
       return Promise.reject(
-        createApiError('UNKNOWN_ERROR', 'Network error. Check your connection and try again.', true)
+        createApiError('NETWORK_ERROR', 'Network error. Check your connection and try again.', true)
       );
     }
 

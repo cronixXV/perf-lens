@@ -6,6 +6,9 @@ const FALLBACK_MESSAGE = 'An unexpected error occurred. Please try again.';
 
 const ERROR_MESSAGES: Record<IAnalysisError['code'], string> = {
   INVALID_URL: 'Please enter a valid website URL.',
+  SSRF_BLOCKED: 'This address cannot be analyzed for security reasons.',
+  RESOURCE_LIMIT_EXCEEDED: 'This page exceeds the analysis resource limits.',
+  CONCURRENCY_LIMIT_EXCEEDED: 'Too many analyses are running. Please try again shortly.',
   TIMEOUT: 'Website analysis timed out. Please try again.',
   NAVIGATION_ERROR: 'Unable to open the website.',
   CLOUDFLARE_BLOCKED: 'The website blocked automated analysis.',

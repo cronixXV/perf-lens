@@ -166,7 +166,17 @@ VITE_API_URL=http://localhost:3000
 
 ```env
 DATABASE_PATH=./data/perf-lens.db
+MAX_ANALYSIS_DURATION_MS=30000
+MAX_PAGE_SIZE_BYTES=15728640
+MAX_REDIRECTS=10
+MAX_CONCURRENT_ANALYSES=2
+# Enable in a production environment that supports Chromium's OS sandbox.
+CHROMIUM_SANDBOX=true
 ```
+
+Все лимиты необязательны: значения выше используются по умолчанию. Они ограничивают
+длительность анализа, суммарный объём полученных данных, число перенаправлений и
+число одновременно работающих Chromium-анализов.
 
 Названия и расположение переменных должны соответствовать конфигурации конкретного workspace.
 

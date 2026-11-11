@@ -3,7 +3,14 @@ import type { TAnalysisErrorCode } from '@shared/contracts/analysis-error';
 export const getAnalysisErrorStatus = (code: TAnalysisErrorCode): number => {
   switch (code) {
     case 'INVALID_URL':
+    case 'SSRF_BLOCKED':
       return 400;
+
+    case 'RESOURCE_LIMIT_EXCEEDED':
+      return 413;
+
+    case 'CONCURRENCY_LIMIT_EXCEEDED':
+      return 429;
 
     case 'TIMEOUT':
       return 504;

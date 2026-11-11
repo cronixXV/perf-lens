@@ -6,7 +6,7 @@ export const createAnalysisSchema = {
     properties: {
       url: {
         type: 'string',
-        format: 'uri'
+        minLength: 1
       }
     }
   }
